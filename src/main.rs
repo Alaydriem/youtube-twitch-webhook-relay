@@ -378,7 +378,13 @@ async fn main() -> anyhow::Result<()> {
                                                                 }).await
                                                             {
                                                                 Ok(result) => {
-                                                                    panic!("Okay we did the thing");
+                                                                    tracing::info!(
+                                                                        "{}",
+                                                                        &format!(
+                                                                            "Published Video: {} to Bluesky!",
+                                                                            &v.title
+                                                                        )
+                                                                    )
                                                                 }
                                                                 Err(e) => {
                                                                     tracing::error!("{:?}", e);
