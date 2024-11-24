@@ -1,5 +1,16 @@
 use anyhow::anyhow;
-use reqwest::Response;
+use atrium_api::app::bsky::embed::external::External;
+use atrium_api::app::bsky::embed::external::ExternalData;
+use atrium_api::app::bsky::embed::external::Main;
+use atrium_api::app::bsky::embed::external::MainData;
+use atrium_api::app::bsky::feed::post::RecordEmbedRefs;
+use atrium_api::types::string::Language;
+use atrium_api::types::Blob;
+use atrium_api::types::BlobRef;
+use atrium_api::types::CidLink;
+use atrium_api::types::TypedBlobRef;
+use atrium_api::types::UnTypedBlobRef;
+use atrium_api::types::Union;
 use serde::{ Deserialize, Serialize };
 use webhook::client::WebhookClient;
 use webhook::models::AllowedMention;
@@ -11,7 +22,9 @@ use tracing::Level;
 use tracing_appender::non_blocking::NonBlocking;
 use tracing_appender::non_blocking::WorkerGuard;
 use tracing_subscriber::fmt::SubscriberBuilder;
-
+use atrium_api::types::string::Datetime as BskyDateTime;
+use atrium_api::app::bsky::feed::post::RecordData;
+use bsky_sdk::BskyAgent;
 use rusqlite::Connection;
 
 extern crate tokio;
@@ -53,15 +66,24 @@ pub struct Playlist {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Webhook {
     pub destination: WebhookType,
-    pub is_forum: bool,
-    pub urls: Vec<String>,
-    pub groups: Vec<String>,
+    pub is_forum: Option<bool>,
+    pub urls: Option<Vec<String>>,
+    pub groups: Option<Vec<String>>,
+    pub credentials: Option<Credentials>,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct Credentials {
+    pub username: String,
+    pub password: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub enum WebhookType {
     #[serde(rename = "discord")]
     Discord,
+    #[serde(rename = "bluesky")]
+    BlueSky,
 }
 
 #[tokio::main]
@@ -197,7 +219,9 @@ async fn main() -> anyhow::Result<()> {
                 for webhook in &playlist.webhooks {
                     match webhook.destination {
                         WebhookType::Discord => {
-                            for url in &webhook.urls {
+                            let urls = webhook.clone().urls.unwrap();
+                            let groups = webhook.clone().groups.unwrap();
+                            for url in &urls {
                                 let client: WebhookClient = WebhookClient::new(url);
                                 match
                                     client.send(|message|
@@ -207,14 +231,14 @@ async fn main() -> anyhow::Result<()> {
                                             .content(
                                                 &format!(
                                                     "{} :: {}",
-                                                    webhook.groups.join(" ").as_str(),
+                                                    groups.join(" ").as_str(),
                                                     &format!(
                                                         "https://www.youtube.com/watch?v={}",
                                                         &v.id
                                                     )
                                                 )
                                             )
-                                            .thread_name(&v.title, webhook.is_forum)
+                                            .thread_name(&v.title, webhook.is_forum.unwrap())
                                             .allow_mentions(
                                                 Some(
                                                     vec![
@@ -279,6 +303,103 @@ async fn main() -> anyhow::Result<()> {
                                     Err(e) => {
                                         tracing::error!("{:?}", e);
                                     }
+                                }
+                            }
+                        }
+                        WebhookType::BlueSky => {
+                            let credentials = webhook.clone().credentials.unwrap();
+                            match BskyAgent::builder().build().await {
+                                Ok(agent) =>
+                                    match
+                                        agent.login(
+                                            &credentials.username,
+                                            &credentials.password
+                                        ).await
+                                    {
+                                        Ok(session) => {
+                                            let thumbnail = match
+                                                reqwest::get(
+                                                    format!(
+                                                        "https://img.youtube.com/vi/{}/maxresdefault.jpg",
+                                                        &v.id
+                                                    )
+                                                ).await
+                                            {
+                                                Ok(result) =>
+                                                    match
+                                                        agent.api.com.atproto.repo.upload_blob(
+                                                            result.bytes().await.unwrap().to_vec()
+                                                        ).await
+                                                    {
+                                                        Ok(blob) =>
+                                                            match
+                                                                agent.create_record(RecordData {
+                                                                    created_at: BskyDateTime::now(),
+                                                                    embed: Some(
+                                                                        Union::Refs(
+                                                                            RecordEmbedRefs::AppBskyEmbedExternalMain(
+                                                                                Box::new(Main {
+                                                                                    data: MainData {
+                                                                                        external: External {
+                                                                                            data: ExternalData {
+                                                                                                title: v.title.clone(),
+                                                                                                description: v.author.clone(),
+                                                                                                uri: format!(
+                                                                                                    "https://www.youtube.com/watch?v={}",
+                                                                                                    &v.id
+                                                                                                ),
+                                                                                                thumb: Some(
+                                                                                                    blob.blob.clone()
+                                                                                                ),
+                                                                                            },
+                                                                                            extra_data: ipld_core::ipld::Ipld::Null,
+                                                                                        },
+                                                                                    },
+                                                                                    extra_data: ipld_core::ipld::Ipld::Null,
+                                                                                })
+                                                                            )
+                                                                        )
+                                                                    ),
+                                                                    entities: None,
+                                                                    facets: None,
+                                                                    labels: None,
+                                                                    langs: Some(
+                                                                        vec![
+                                                                            Language::new(
+                                                                                String::from(
+                                                                                    "en-US"
+                                                                                )
+                                                                            ).unwrap()
+                                                                        ]
+                                                                    ),
+                                                                    reply: None,
+                                                                    tags: None,
+                                                                    text: format!("{}", &v.title),
+                                                                }).await
+                                                            {
+                                                                Ok(result) => {
+                                                                    panic!("Okay we did the thing");
+                                                                }
+                                                                Err(e) => {
+                                                                    tracing::error!("{:?}", e);
+                                                                }
+                                                            }
+
+                                                        Err(e) => {
+                                                            tracing::error!("{:?}", e);
+                                                        }
+                                                    }
+                                                Err(e) => {
+                                                    tracing::error!("{:?}", e);
+                                                }
+                                            };
+                                        }
+                                        Err(e) => {
+                                            tracing::error!("{:?}", e);
+                                        }
+                                    }
+                                Err(e) => {
+                                    tracing::error!("{:?}", e);
                                 }
                             }
                         }

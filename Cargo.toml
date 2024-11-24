@@ -36,3 +36,6 @@ serde_yaml = "0.9.34"
 feed-rs = "2.0.0"
 quick-xml = { version = "0.31.0", features = ["serialize"] }
 webhook = { git = "https://github.com/Alaydriem/webhook-rs" }
+bsky-sdk = "0.1.13"
+atrium-api = "0.24.8"
+ipld-core = "0.4.1"
