@@ -30,4 +30,8 @@ playlist:
           - "<@&DiscordNotificationRoleId>"
         urls:
           - https://discord.com/api/webhooks/.../...
+      - destination: bluesky
+        credentials:
+          username: alaydriem.com
+          password: <bluesky_app_password>
 ```
