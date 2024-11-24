@@ -378,6 +378,13 @@ async fn main() -> anyhow::Result<()> {
                                                                 }).await
                                                             {
                                                                 Ok(result) => {
+                                                                    let r = connection.execute(
+                                                                        &format!(
+                                                                            "UPDATE video SET hooked = 1 WHERE id = '{}';",
+                                                                            &v.id
+                                                                        ),
+                                                                        ()
+                                                                    );
                                                                     tracing::info!(
                                                                         "{}",
                                                                         &format!(
